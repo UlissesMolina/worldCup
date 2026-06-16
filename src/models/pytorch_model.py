@@ -34,8 +34,10 @@ def train_pytorch(X: pd.DataFrame, y: pd.Series, epochs: int = 100, lr: float = 
     le.fit(CLASS_ORDER)
     y_encoded = le.transform(y)
 
+    X_clean = X.fillna(0).replace([np.inf, -np.inf], 0).values
+
     scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X.values)
+    X_scaled = scaler.fit_transform(X_clean)
 
     X_tensor = torch.FloatTensor(X_scaled)
     y_tensor = torch.LongTensor(y_encoded)
@@ -61,7 +63,8 @@ def predict_pytorch(trained: dict, X: pd.DataFrame) -> pd.DataFrame:
     scaler = trained["scaler"]
     le = trained["label_encoder"]
 
-    X_scaled = scaler.transform(X.values)
+    X_clean = X.fillna(0).replace([np.inf, -np.inf], 0).values
+    X_scaled = scaler.transform(X_clean)
     X_tensor = torch.FloatTensor(X_scaled)
 
     model.eval()

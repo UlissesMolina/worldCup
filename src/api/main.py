@@ -1,12 +1,13 @@
 from pathlib import Path
 from contextlib import asynccontextmanager
-from functools import lru_cache
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 from src.api.schemas import PredictionRequest, PredictionResponse
-from src.features.engineering import build_features
+from src.features.engineering import build_features, compute_elo_ratings
 from src.models.xgboost_model import load_xgboost, predict_xgboost
 from src.models.pytorch_model import load_pytorch, predict_pytorch
 
@@ -34,12 +35,14 @@ def load_model_and_data() -> dict:
 
     df = pd.read_parquet(DATA_DIR / "matches.parquet")
     teams = set(df["home_team"].unique()) | set(df["away_team"].unique())
+    elo_ratings = compute_elo_ratings(df)
 
     return {
         "predict_fn": predict_fn,
         "df": df,
         "model_type": model_type,
         "teams": teams,
+        "elo_ratings": elo_ratings,
     }
 
 
@@ -51,6 +54,18 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="World Cup Predictor", lifespan=lifespan)
+
+STATIC_DIR = ROOT / "static"
+
+
+@app.get("/")
+def index():
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/teams")
+def get_teams():
+    return sorted(_state["teams"])
 
 
 @app.post("/predict", response_model=PredictionResponse)
@@ -68,6 +83,7 @@ def predict(req: PredictionRequest):
         away_team=req.away_team,
         match_date=pd.Timestamp.now(),
         neutral=req.neutral_venue,
+        elo_ratings=_state["elo_ratings"],
     )
 
     X = pd.DataFrame([features])

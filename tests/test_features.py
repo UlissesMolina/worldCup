@@ -1,7 +1,11 @@
 import pandas as pd
 import numpy as np
 import pytest
-from src.features.engineering import compute_team_form, compute_h2h, compute_rest_days, compute_goal_diff_form, encode_tournament, build_features, build_dataset
+from src.features.engineering import (
+    compute_team_form, compute_h2h, compute_rest_days, compute_goal_diff_form,
+    encode_tournament, build_features, build_dataset,
+    compute_elo_ratings, get_elo_rating, compute_goals_scored_rate, compute_goals_conceded_rate,
+)
 
 
 def test_compute_team_form_win_rate(sample_matches):
@@ -61,6 +65,52 @@ def test_encode_tournament():
     assert encode_tournament("Some Unknown Tournament") == "other"
 
 
+def test_compute_elo_ratings(sample_matches):
+    elo = compute_elo_ratings(sample_matches)
+    # All teams should have entries
+    assert any(t == "Brazil" for t, _ in elo.keys())
+    assert any(t == "Germany" for t, _ in elo.keys())
+    # Latest ratings should differ from 1500 after matches
+    assert elo[("Brazil", None)] != 1500.0
+    assert elo[("Germany", None)] != 1500.0
+
+
+def test_get_elo_rating(sample_matches):
+    elo = compute_elo_ratings(sample_matches)
+    # Before any match, should get default 1500
+    rating = get_elo_rating(elo, "Brazil", pd.Timestamp("2019-01-01"))
+    assert rating == 1500.0
+    # After some matches, should differ
+    rating = get_elo_rating(elo, "Brazil", pd.Timestamp("2023-06-10"))
+    assert rating != 1500.0
+
+
+def test_compute_goals_scored_rate(sample_matches):
+    rate = compute_goals_scored_rate(sample_matches, "Brazil", pd.Timestamp("2023-06-10"), n=5)
+    assert isinstance(rate, float)
+    assert rate >= 0.0
+
+
+def test_compute_goals_scored_rate_no_history():
+    df = pd.DataFrame(columns=["date", "home_team", "away_team", "home_score", "away_score"])
+    df["date"] = pd.to_datetime(df["date"])
+    rate = compute_goals_scored_rate(df, "Brazil", pd.Timestamp("2020-01-01"), n=5)
+    assert rate == 0.0
+
+
+def test_compute_goals_conceded_rate(sample_matches):
+    rate = compute_goals_conceded_rate(sample_matches, "Brazil", pd.Timestamp("2023-06-10"), n=5)
+    assert isinstance(rate, float)
+    assert rate >= 0.0
+
+
+def test_compute_goals_conceded_rate_no_history():
+    df = pd.DataFrame(columns=["date", "home_team", "away_team", "home_score", "away_score"])
+    df["date"] = pd.to_datetime(df["date"])
+    rate = compute_goals_conceded_rate(df, "Brazil", pd.Timestamp("2020-01-01"), n=5)
+    assert rate == 0.0
+
+
 def test_build_features_returns_expected_keys(sample_matches):
     features = build_features(sample_matches, "Brazil", "Germany", pd.Timestamp("2023-06-10"), neutral=True)
     expected_keys = [
@@ -68,9 +118,13 @@ def test_build_features_returns_expected_keys(sample_matches):
         "h2h_win_rate", "home_rest_days", "away_rest_days",
         "home_goal_diff", "away_goal_diff", "neutral",
         "tournament_friendly", "tournament_qualifier", "tournament_major", "tournament_other",
+        "home_elo", "away_elo", "elo_diff",
+        "home_goals_scored_rate", "home_goals_conceded_rate",
+        "away_goals_scored_rate", "away_goals_conceded_rate",
     ]
     for key in expected_keys:
         assert key in features, f"Missing feature: {key}"
+    assert len(features) == 21
 
 
 def test_build_features_values_are_numeric(sample_matches):

@@ -4,6 +4,8 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
+from src.features.engineering import compute_elo_ratings
+
 
 @pytest.fixture
 def mock_model_and_data():
@@ -30,6 +32,7 @@ def mock_model_and_data():
             "df": fake_df,
             "model_type": "xgboost",
             "teams": {"Brazil", "Germany", "Argentina"},
+            "elo_ratings": compute_elo_ratings(fake_df),
         }
         from src.api.main import app
         with TestClient(app) as client:

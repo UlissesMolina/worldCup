@@ -89,6 +89,110 @@ def compute_goal_diff_form(df: pd.DataFrame, team: str, before_date: pd.Timestam
     return total_diff / len(team_matches)
 
 
+def compute_elo_ratings(df: pd.DataFrame, k: int = 20) -> dict:
+    """Compute Elo ratings for all teams from chronological match history.
+
+    Returns a dict mapping (team, date) → elo rating *before* that match.
+    Also stores a running 'latest' keyed as (team, None) for lookup convenience.
+    """
+    elo = {}  # team -> current elo
+    history = {}  # (team, date) -> elo before match
+
+    for _, row in df.sort_values("date").iterrows():
+        home, away = row["home_team"], row["away_team"]
+        date = row["date"]
+
+        home_elo = elo.get(home, 1500.0)
+        away_elo = elo.get(away, 1500.0)
+
+        # Record pre-match ratings
+        history[(home, date)] = home_elo
+        history[(away, date)] = away_elo
+
+        # Expected scores
+        exp_home = 1.0 / (1.0 + 10 ** ((away_elo - home_elo) / 400))
+        exp_away = 1.0 - exp_home
+
+        # Actual scores
+        if row["home_score"] > row["away_score"]:
+            actual_home, actual_away = 1.0, 0.0
+        elif row["home_score"] < row["away_score"]:
+            actual_home, actual_away = 0.0, 1.0
+        else:
+            actual_home, actual_away = 0.5, 0.5
+
+        elo[home] = home_elo + k * (actual_home - exp_home)
+        elo[away] = away_elo + k * (actual_away - exp_away)
+
+    # Store latest ratings
+    for team, rating in elo.items():
+        history[(team, None)] = rating
+
+    return history
+
+
+def get_elo_rating(elo_dict: dict, team: str, before_date: pd.Timestamp) -> float:
+    """Look up team's Elo rating just before a given date.
+
+    Finds the most recent entry for the team before before_date.
+    Returns 1500.0 if no history exists.
+    """
+    best_date = None
+    best_elo = 1500.0
+
+    for (t, d), rating in elo_dict.items():
+        if t != team or d is None:
+            continue
+        if d < before_date:
+            if best_date is None or d > best_date:
+                best_date = d
+                best_elo = rating
+
+    return best_elo
+
+
+def compute_goals_scored_rate(df: pd.DataFrame, team: str, before_date: pd.Timestamp, n: int = 5) -> float:
+    """Average goals scored per match over last n games before a given date."""
+    mask = (
+        ((df["home_team"] == team) | (df["away_team"] == team))
+        & (df["date"] < before_date)
+    )
+    team_matches = df[mask].sort_values("date").tail(n)
+
+    if len(team_matches) == 0:
+        return 0.0
+
+    total = 0
+    for _, row in team_matches.iterrows():
+        if row["home_team"] == team:
+            total += row["home_score"]
+        else:
+            total += row["away_score"]
+
+    return total / len(team_matches)
+
+
+def compute_goals_conceded_rate(df: pd.DataFrame, team: str, before_date: pd.Timestamp, n: int = 5) -> float:
+    """Average goals conceded per match over last n games before a given date."""
+    mask = (
+        ((df["home_team"] == team) | (df["away_team"] == team))
+        & (df["date"] < before_date)
+    )
+    team_matches = df[mask].sort_values("date").tail(n)
+
+    if len(team_matches) == 0:
+        return 0.0
+
+    total = 0
+    for _, row in team_matches.iterrows():
+        if row["home_team"] == team:
+            total += row["away_score"]
+        else:
+            total += row["home_score"]
+
+    return total / len(team_matches)
+
+
 MAJOR_TOURNAMENTS = {
     "FIFA World Cup", "Copa América", "UEFA Euro", "AFC Asian Cup",
     "African Cup of Nations", "Gold Cup", "Confederations Cup",
@@ -117,6 +221,7 @@ def build_features(
     match_date: pd.Timestamp,
     neutral: bool,
     tournament: str = "other",
+    elo_ratings: dict | None = None,
 ) -> dict:
     """Build the full feature dict for a single match prediction."""
     home_form_5 = compute_team_form(df, home_team, match_date, n=5)
@@ -134,6 +239,20 @@ def build_features(
 
     tourn_cat = encode_tournament(tournament)
 
+    # Elo ratings
+    if elo_ratings is not None:
+        home_elo = get_elo_rating(elo_ratings, home_team, match_date)
+        away_elo = get_elo_rating(elo_ratings, away_team, match_date)
+    else:
+        home_elo = 1500.0
+        away_elo = 1500.0
+
+    # Goal scoring/conceding rates
+    home_goals_scored = compute_goals_scored_rate(df, home_team, match_date, n=5)
+    home_goals_conceded = compute_goals_conceded_rate(df, home_team, match_date, n=5)
+    away_goals_scored = compute_goals_scored_rate(df, away_team, match_date, n=5)
+    away_goals_conceded = compute_goals_conceded_rate(df, away_team, match_date, n=5)
+
     return {
         "home_form_5": home_form_5["win_rate"],
         "home_form_10": home_form_10["win_rate"],
@@ -149,6 +268,13 @@ def build_features(
         "tournament_qualifier": int(tourn_cat == "qualifier"),
         "tournament_major": int(tourn_cat == "major"),
         "tournament_other": int(tourn_cat == "other"),
+        "home_elo": home_elo,
+        "away_elo": away_elo,
+        "elo_diff": home_elo - away_elo,
+        "home_goals_scored_rate": home_goals_scored,
+        "home_goals_conceded_rate": home_goals_conceded,
+        "away_goals_scored_rate": away_goals_scored,
+        "away_goals_conceded_rate": away_goals_conceded,
     }
 
 
@@ -157,6 +283,8 @@ def build_dataset(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
 
     df must have a 'target' column (from add_target) and be sorted by date.
     """
+    elo_ratings = compute_elo_ratings(df)
+
     rows = []
     for idx, match in df.iterrows():
         features = build_features(
@@ -166,6 +294,7 @@ def build_dataset(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
             match_date=match["date"],
             neutral=bool(match["neutral"]),
             tournament=match.get("tournament", "other"),
+            elo_ratings=elo_ratings,
         )
         rows.append(features)
 

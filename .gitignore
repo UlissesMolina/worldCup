@@ -7,6 +7,11 @@ models/*.pkl
 models/*.pt
 models/*.json
 
+# Tool configs
+.superpowers/
+.claude/
+docs/superpowers/
+
 # Python
 __pycache__/
 *.pyc
