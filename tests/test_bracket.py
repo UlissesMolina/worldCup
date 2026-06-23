@@ -7,6 +7,8 @@ from src.simulation.bracket import (
     simulate_group_stage,
     rank_third_place,
     seed_bracket,
+    simulate_knockout_round,
+    simulate_tournament,
 )
 
 
@@ -127,3 +129,69 @@ def test_seed_bracket():
                     away_group = letter
         if home_group and away_group:
             assert home_group != away_group, f"{match['home']} vs {match['away']} are from same group {home_group}"
+
+
+def _make_mock_predict_fn():
+    """Return a predict_fn that always gives home team 60% win."""
+    def predict_fn(X):
+        return pd.DataFrame(
+            [{"away_win": 0.15, "draw": 0.25, "home_win": 0.60}]
+        )
+    return predict_fn
+
+
+def test_simulate_knockout_round():
+    matchups = [
+        {"home": "Brazil", "away": "Germany"},
+        {"home": "France", "away": "Spain"},
+    ]
+    fake_df = pd.DataFrame({
+        "date": pd.to_datetime(["2020-01-01", "2021-01-01"]),
+        "home_team": ["Brazil", "France"],
+        "away_team": ["Germany", "Spain"],
+        "home_score": [2, 1],
+        "away_score": [1, 0],
+        "tournament": ["Friendly", "Friendly"],
+        "neutral": [False, False],
+    })
+    from src.features.engineering import compute_elo_ratings
+    elo = compute_elo_ratings(fake_df)
+    predict_fn = _make_mock_predict_fn()
+
+    results = simulate_knockout_round(
+        matchups, fake_df, elo, predict_fn, pd.Timestamp("2025-06-15")
+    )
+    assert len(results) == 2
+    assert results[0]["winner"] == "Brazil"
+    assert results[1]["winner"] == "France"
+
+
+def test_simulate_tournament_returns_full_structure():
+    fake_df = pd.DataFrame({
+        "date": pd.to_datetime(["2020-01-01", "2021-01-01", "2022-01-01"]),
+        "home_team": ["Brazil", "Germany", "France"],
+        "away_team": ["Germany", "France", "Brazil"],
+        "home_score": [2, 1, 0],
+        "away_score": [1, 0, 0],
+        "tournament": ["Friendly", "Friendly", "Friendly"],
+        "neutral": [False, False, False],
+    })
+    from src.features.engineering import compute_elo_ratings
+    elo = compute_elo_ratings(fake_df)
+    predict_fn = _make_mock_predict_fn()
+
+    result = simulate_tournament(fake_df, elo, predict_fn)
+
+    assert "groups" in result
+    assert len(result["groups"]) == 12
+    assert "knockout" in result
+    assert "r32" in result["knockout"]
+    assert len(result["knockout"]["r32"]) == 16
+    assert "r16" in result["knockout"]
+    assert len(result["knockout"]["r16"]) == 8
+    assert "qf" in result["knockout"]
+    assert len(result["knockout"]["qf"]) == 4
+    assert "sf" in result["knockout"]
+    assert len(result["knockout"]["sf"]) == 2
+    assert "final" in result["knockout"]
+    assert "champion" in result

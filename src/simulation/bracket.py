@@ -239,3 +239,104 @@ def seed_bracket(
         r32.append(fixed_matches[4 + i])
 
     return r32
+
+
+def simulate_knockout_round(
+    matchups: list[dict],
+    df: pd.DataFrame,
+    elo_ratings: dict,
+    predict_fn,
+    match_date: pd.Timestamp,
+) -> list[dict]:
+    """Simulate a knockout round. No draws — higher win prob advances."""
+    results = []
+    for matchup in matchups:
+        match = predict_match(
+            home_team=matchup["home"],
+            away_team=matchup["away"],
+            df=df,
+            elo_ratings=elo_ratings,
+            predict_fn=predict_fn,
+            match_date=match_date,
+            neutral=True,
+            tournament="FIFA World Cup",
+        )
+        if match["result"] == "home_win":
+            match["winner"] = match["home"]
+        elif match["result"] == "away_win":
+            match["winner"] = match["away"]
+        else:
+            if match["home_win"] >= match["away_win"]:
+                match["winner"] = match["home"]
+            else:
+                match["winner"] = match["away"]
+        results.append(match)
+    return results
+
+
+def simulate_tournament(
+    df: pd.DataFrame,
+    elo_ratings: dict,
+    predict_fn,
+    match_date: pd.Timestamp | None = None,
+) -> dict:
+    """Simulate the full 2026 World Cup tournament."""
+    from src.data.groups import GROUPS
+
+    if match_date is None:
+        match_date = pd.Timestamp("2026-06-11")
+
+    # 1. Group stage
+    group_results = simulate_group_stage(
+        GROUPS, df, elo_ratings, predict_fn, match_date
+    )
+
+    # 2. Third-place ranking
+    third_place = rank_third_place(group_results)
+
+    # Update group standings with third-place advancement
+    for entry in third_place:
+        if entry["advanced"]:
+            group = entry["group"]
+            for row in group_results[group]["standings"]:
+                if row["pos"] == 3:
+                    row["advanced"] = True
+
+    # 3. Seed bracket
+    r32_matchups = seed_bracket(group_results, third_place)
+
+    # 4. Knockout rounds
+    r32 = simulate_knockout_round(r32_matchups, df, elo_ratings, predict_fn, match_date)
+
+    r16_matchups = [
+        {"home": r32[i]["winner"], "away": r32[i + 1]["winner"]}
+        for i in range(0, 16, 2)
+    ]
+    r16 = simulate_knockout_round(r16_matchups, df, elo_ratings, predict_fn, match_date)
+
+    qf_matchups = [
+        {"home": r16[i]["winner"], "away": r16[i + 1]["winner"]}
+        for i in range(0, 8, 2)
+    ]
+    qf = simulate_knockout_round(qf_matchups, df, elo_ratings, predict_fn, match_date)
+
+    sf_matchups = [
+        {"home": qf[i]["winner"], "away": qf[i + 1]["winner"]}
+        for i in range(0, 4, 2)
+    ]
+    sf = simulate_knockout_round(sf_matchups, df, elo_ratings, predict_fn, match_date)
+
+    final_matchup = [{"home": sf[0]["winner"], "away": sf[1]["winner"]}]
+    final = simulate_knockout_round(final_matchup, df, elo_ratings, predict_fn, match_date)
+
+    return {
+        "groups": group_results,
+        "knockout": {
+            "r32": r32,
+            "r16": r16,
+            "qf": qf,
+            "sf": sf,
+            "final": final[0],
+        },
+        "champion": final[0]["winner"],
+    }

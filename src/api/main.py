@@ -10,6 +10,7 @@ from src.api.schemas import PredictionRequest, PredictionResponse
 from src.features.engineering import build_features, compute_elo_ratings
 from src.models.xgboost_model import load_xgboost, predict_xgboost
 from src.models.pytorch_model import load_pytorch, predict_pytorch
+from src.simulation.bracket import simulate_tournament
 
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -94,4 +95,13 @@ def predict(req: PredictionRequest):
         draw=round(float(probs["draw"].iloc[0]), 4),
         away_win=round(float(probs["away_win"].iloc[0]), 4),
         model_used=_state["model_type"],
+    )
+
+
+@app.post("/simulate-bracket")
+def simulate_bracket():
+    return simulate_tournament(
+        df=_state["df"],
+        elo_ratings=_state["elo_ratings"],
+        predict_fn=_state["predict_fn"],
     )
