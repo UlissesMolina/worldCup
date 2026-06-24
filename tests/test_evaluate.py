@@ -40,3 +40,22 @@ def test_select_best_model_pytorch_wins():
     }
     best = select_best_model(results)
     assert best == "pytorch"
+
+
+def test_evaluate_model_returns_per_class_metrics(dummy_predictions):
+    y_true, y_probs = dummy_predictions
+    metrics = evaluate_model(y_true, y_probs)
+
+    assert "classification_report" in metrics
+    assert "confusion_matrix" in metrics
+
+    report = metrics["classification_report"]
+    for cls in ["away_win", "draw", "home_win"]:
+        assert cls in report
+        assert "precision" in report[cls]
+        assert "recall" in report[cls]
+        assert "f1-score" in report[cls]
+
+    cm = metrics["confusion_matrix"]
+    assert len(cm) == 3
+    assert len(cm[0]) == 3

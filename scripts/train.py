@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pandas as pd
+from sklearn.metrics import classification_report as sk_report
 
 from src.data.download import download_match_data
 from src.data.process import clean_matches, add_target, process_and_save
@@ -62,12 +63,30 @@ def main():
     xgb_metrics = evaluate_model(y_test, xgb_probs)
     print(f"  XGBoost — log_loss: {xgb_metrics['log_loss']:.4f}, accuracy: {xgb_metrics['accuracy']:.4f}")
 
+    print("\n  XGBoost per-class report:")
+    xgb_pred_labels = xgb_probs.idxmax(axis=1)
+    print(sk_report(
+        y_test, xgb_pred_labels,
+        target_names=["away_win", "draw", "home_win"],
+        labels=["away_win", "draw", "home_win"],
+        zero_division=0,
+    ))
+
     # 6. Train PyTorch
     print(f"Training PyTorch ({args.epochs} epochs)...")
     pt_trained = train_pytorch(X_train, y_train, epochs=args.epochs)
     pt_probs = predict_pytorch(pt_trained, X_test)
     pt_metrics = evaluate_model(y_test, pt_probs)
     print(f"  PyTorch — log_loss: {pt_metrics['log_loss']:.4f}, accuracy: {pt_metrics['accuracy']:.4f}")
+
+    print("\n  PyTorch per-class report:")
+    pt_pred_labels = pt_probs.idxmax(axis=1)
+    print(sk_report(
+        y_test, pt_pred_labels,
+        target_names=["away_win", "draw", "home_win"],
+        labels=["away_win", "draw", "home_win"],
+        zero_division=0,
+    ))
 
     # 7. Select winner
     results = {"xgboost": xgb_metrics, "pytorch": pt_metrics}
