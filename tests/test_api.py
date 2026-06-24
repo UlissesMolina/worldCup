@@ -117,22 +117,21 @@ def mock_bracket_client():
             yield client
 
 
-def test_simulate_bracket_returns_full_bracket(mock_bracket_client):
+def test_simulate_bracket_returns_monte_carlo(mock_bracket_client):
     client = mock_bracket_client
-    resp = client.post("/simulate-bracket")
+    resp = client.post("/simulate-bracket?n_simulations=50")
     assert resp.status_code == 200
     data = resp.json()
-    assert "groups" in data
-    assert len(data["groups"]) == 12
-    assert "knockout" in data
-    assert "r32" in data["knockout"]
-    assert len(data["knockout"]["r32"]) == 16
-    assert "r16" in data["knockout"]
-    assert len(data["knockout"]["r16"]) == 8
-    assert "qf" in data["knockout"]
-    assert len(data["knockout"]["qf"]) == 4
-    assert "sf" in data["knockout"]
-    assert len(data["knockout"]["sf"]) == 2
-    assert "final" in data["knockout"]
-    assert "champion" in data
-    assert isinstance(data["champion"], str)
+
+    assert "teams" in data
+    assert "simulations" in data
+    assert data["simulations"] == 50
+
+    # Should have all 48 teams
+    assert len(data["teams"]) == 48
+
+    stages = ["group_pct", "r32_pct", "r16_pct", "qf_pct", "sf_pct", "final_pct", "champion_pct"]
+    for team, team_data in data["teams"].items():
+        for stage in stages:
+            assert stage in team_data
+            assert 0 <= team_data[stage] <= 100

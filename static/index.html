@@ -27,13 +27,9 @@
     .fixture-row:hover { background: rgba(255,255,255,0.08); }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
     .fade-in { animation: fadeIn 0.3s ease-out; }
-    .bracket-round { display: flex; flex-direction: column; justify-content: center; gap: 8px; min-width: 180px; }
-    .bracket-match { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 6px 10px; font-size: 12px; }
-    .bracket-match .winner { color: #4ade80; font-weight: 600; }
-    .bracket-match .loser { color: #64748b; }
-    .bracket-match .prob { color: #94a3b8; font-size: 10px; margin-left: 4px; }
-    .bracket-wrapper { display: flex; align-items: center; gap: 16px; padding: 16px 0; }
-    .round-label { text-align: center; font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; font-weight: 600; }
+    th.sortable { cursor: pointer; user-select: none; }
+    th.sortable:hover { color: #e2e8f0; }
+    th.sortable .sort-arrow { margin-left: 4px; font-size: 10px; }
   </style>
 </head>
 <body class="text-slate-300 min-h-screen">
@@ -52,7 +48,7 @@
   <div class="max-w-4xl mx-auto px-6 pt-6">
     <div class="flex gap-1 bg-white/5 rounded-xl p-1 border border-white/10">
       <button id="tab-predictor" onclick="switchTab('predictor')" class="tab-btn flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all text-white bg-white/10">Match Predictor</button>
-      <button id="tab-bracket" onclick="switchTab('bracket')" class="tab-btn flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all text-slate-400 hover:text-slate-300">Tournament Bracket</button>
+      <button id="tab-bracket" onclick="switchTab('bracket')" class="tab-btn flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all text-slate-400 hover:text-slate-300">Tournament Simulation</button>
     </div>
   </div>
 
@@ -122,36 +118,42 @@
     </div>
   </main>
 
-  <!-- Bracket Tab (hidden by default) -->
-  <main id="tab-content-bracket" class="hidden mx-auto px-6 py-8" style="max-width: 1400px;">
+  <!-- Simulation Tab (hidden by default) -->
+  <main id="tab-content-bracket" class="hidden mx-auto px-6 py-8" style="max-width: 1100px;">
     <div class="bg-surface border border-border rounded-2xl p-7 text-center">
-      <h2 class="text-white font-semibold text-lg mb-3">2026 World Cup — Full Tournament Prediction</h2>
-      <p class="text-sm text-slate-500 mb-6">Simulate the entire tournament from group stage to the final</p>
+      <h2 class="text-white font-semibold text-lg mb-3">2026 World Cup — Monte Carlo Simulation</h2>
+      <p class="text-sm text-slate-500 mb-6">Run 10,000 tournament simulations to estimate each team's advancement probability</p>
       <button id="simulate-btn" onclick="simulateTournament()" class="bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-white px-8 py-3 rounded-xl font-semibold text-sm transition-all disabled:opacity-40 disabled:cursor-not-allowed">
         Simulate Tournament
       </button>
       <div id="bracket-error" class="hidden text-red-400 text-sm mt-4"></div>
     </div>
 
-    <!-- Groups Section -->
-    <div id="groups-section" class="hidden mt-7">
-      <div class="flex items-center justify-between mb-4">
-        <h3 class="text-white font-semibold text-lg">Group Stage Results</h3>
-        <button onclick="toggleGroups()" id="groups-toggle" class="text-sm text-slate-400 hover:text-slate-300">Hide Groups</button>
+    <!-- Monte Carlo Results Table -->
+    <div id="mc-results" class="hidden mt-7 fade-in">
+      <div class="bg-surface border border-border rounded-2xl p-7">
+        <div class="flex items-center justify-between mb-5">
+          <h3 class="text-white font-semibold text-lg">Advancement Probabilities</h3>
+          <span id="mc-sim-count" class="text-xs text-slate-500"></span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm" id="mc-table">
+            <thead>
+              <tr class="text-slate-400 border-b border-white/10">
+                <th class="sortable text-left py-3 px-2" onclick="sortMCTable('team')">Team<span class="sort-arrow"></span></th>
+                <th class="sortable text-right py-3 px-2" onclick="sortMCTable('group_pct')">Group %<span class="sort-arrow"></span></th>
+                <th class="sortable text-right py-3 px-2" onclick="sortMCTable('r32_pct')">R32 %<span class="sort-arrow"></span></th>
+                <th class="sortable text-right py-3 px-2" onclick="sortMCTable('r16_pct')">R16 %<span class="sort-arrow"></span></th>
+                <th class="sortable text-right py-3 px-2" onclick="sortMCTable('qf_pct')">QF %<span class="sort-arrow"></span></th>
+                <th class="sortable text-right py-3 px-2" onclick="sortMCTable('sf_pct')">SF %<span class="sort-arrow"></span></th>
+                <th class="sortable text-right py-3 px-2" onclick="sortMCTable('final_pct')">Final %<span class="sort-arrow"></span></th>
+                <th class="sortable text-right py-3 px-2" onclick="sortMCTable('champion_pct')">Champion %<span class="sort-arrow"></span></th>
+              </tr>
+            </thead>
+            <tbody id="mc-tbody"></tbody>
+          </table>
+        </div>
       </div>
-      <div id="groups-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"></div>
-    </div>
-
-    <!-- Bracket Section -->
-    <div id="bracket-section" class="hidden mt-7">
-      <h3 class="text-white font-semibold text-lg mb-4">Knockout Bracket</h3>
-      <div id="bracket-container" class="overflow-x-auto"></div>
-    </div>
-
-    <!-- Champion Banner -->
-    <div id="champion-banner" class="hidden mt-7 bg-gradient-to-r from-amber-500/20 to-yellow-500/20 border border-amber-500/30 rounded-2xl p-8 text-center">
-      <div class="text-sm text-amber-400 uppercase tracking-wide mb-2">Predicted Champion</div>
-      <div id="champion-name" class="text-4xl font-bold text-amber-300"></div>
     </div>
   </main>
 
@@ -169,21 +171,17 @@
       document.getElementById('tab-content-bracket').classList.toggle('hidden', tab !== 'bracket');
     }
 
-    function toggleGroups() {
-      const grid = document.getElementById('groups-grid');
-      const btn = document.getElementById('groups-toggle');
-      grid.classList.toggle('hidden');
-      btn.textContent = grid.classList.contains('hidden') ? 'Show Groups' : 'Hide Groups';
-    }
-
-    let bracketData = null;
+    // Monte Carlo state
+    let mcData = null;
+    let mcSortCol = 'champion_pct';
+    let mcSortAsc = false;
 
     async function simulateTournament() {
       const btn = document.getElementById('simulate-btn');
       const errorEl = document.getElementById('bracket-error');
       errorEl.classList.add('hidden');
       btn.disabled = true;
-      btn.textContent = 'Simulating...';
+      btn.textContent = 'Simulating (this may take a minute)...';
 
       try {
         const res = await fetch('/simulate-bracket', { method: 'POST' });
@@ -191,10 +189,10 @@
           const data = await res.json();
           throw new Error(data.detail || 'Simulation failed');
         }
-        bracketData = await res.json();
-        renderGroups(bracketData.groups);
-        renderBracket(bracketData.knockout);
-        renderChampion(bracketData.champion);
+        mcData = await res.json();
+        mcSortCol = 'champion_pct';
+        mcSortAsc = false;
+        renderMCTable();
       } catch (e) {
         errorEl.textContent = e.message;
         errorEl.classList.remove('hidden');
@@ -204,118 +202,89 @@
       }
     }
 
-    function renderGroups(groups) {
-      const grid = document.getElementById('groups-grid');
-      grid.innerHTML = '';
+    function renderMCTable() {
+      const tbody = document.getElementById('mc-tbody');
+      tbody.innerHTML = '';
 
-      Object.entries(groups).sort().forEach(([letter, data]) => {
-        const table = document.createElement('div');
-        table.className = 'bg-white/[0.03] border border-white/[0.06] rounded-xl p-4';
-        let html = `<div class="text-white font-semibold text-sm mb-3">Group ${letter}</div>`;
-        html += `<table class="w-full text-xs">
-          <thead><tr class="text-slate-500">
-            <th class="text-left pb-2">Team</th>
-            <th class="text-center pb-2">W</th>
-            <th class="text-center pb-2">D</th>
-            <th class="text-center pb-2">L</th>
-            <th class="text-center pb-2">GD</th>
-            <th class="text-center pb-2">Pts</th>
-          </tr></thead><tbody>`;
+      document.getElementById('mc-sim-count').textContent =
+        mcData.simulations.toLocaleString() + ' simulations';
 
-        data.standings.forEach(row => {
-          const advClass = row.advanced
-            ? (row.pos <= 2 ? 'text-emerald-400' : 'text-sky-400')
-            : 'text-slate-400';
-          const bg = row.advanced ? 'bg-white/[0.03]' : '';
-          html += `<tr class="${bg}">
-            <td class="${advClass} py-1 text-left font-medium">${row.team}</td>
-            <td class="text-center text-slate-400">${row.w}</td>
-            <td class="text-center text-slate-400">${row.d}</td>
-            <td class="text-center text-slate-400">${row.l}</td>
-            <td class="text-center text-slate-400">${row.gd > 0 ? '+' : ''}${row.gd}</td>
-            <td class="text-center text-white font-semibold">${row.pts}</td>
-          </tr>`;
-        });
+      // Build rows array
+      const rows = Object.entries(mcData.teams).map(([team, d]) => ({
+        team, ...d
+      }));
 
-        html += '</tbody></table>';
-        table.innerHTML = html;
-        grid.appendChild(table);
+      // Sort
+      rows.sort((a, b) => {
+        let va = a[mcSortCol], vb = b[mcSortCol];
+        if (mcSortCol === 'team') {
+          return mcSortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+        }
+        return mcSortAsc ? va - vb : vb - va;
       });
 
-      document.getElementById('groups-section').classList.remove('hidden');
-    }
+      // Find max champion_pct for color scaling
+      const maxChamp = Math.max(...rows.map(r => r.champion_pct), 1);
 
-    function renderChampion(champion) {
-      document.getElementById('champion-name').textContent = champion;
-      document.getElementById('champion-banner').classList.remove('hidden');
-    }
+      rows.forEach((row, i) => {
+        const tr = document.createElement('tr');
+        const intensity = row.champion_pct / maxChamp;
+        const bgOpacity = (0.02 + intensity * 0.06).toFixed(3);
+        tr.className = `border-b border-white/5 hover:bg-white/[0.06] transition-colors`;
+        tr.style.background = `rgba(255,255,255,${bgOpacity})`;
 
-    function renderBracket(knockout) {
-      const container = document.getElementById('bracket-container');
-      container.innerHTML = '';
-
-      const rounds = [
-        { label: 'Round of 32', matches: knockout.r32, left: knockout.r32.slice(0, 8), right: knockout.r32.slice(8, 16) },
-        { label: 'Round of 16', matches: knockout.r16, left: knockout.r16.slice(0, 4), right: knockout.r16.slice(4, 8) },
-        { label: 'Quarterfinals', matches: knockout.qf, left: knockout.qf.slice(0, 2), right: knockout.qf.slice(2, 4) },
-        { label: 'Semifinals', matches: knockout.sf, left: [knockout.sf[0]], right: [knockout.sf[1]] },
-      ];
-
-      const wrapper = document.createElement('div');
-      wrapper.className = 'bracket-wrapper';
-
-      // Left bracket (flows left to right)
-      rounds.forEach((round, ri) => {
-        const col = createRoundColumn(round.label, round.left, ri);
-        wrapper.appendChild(col);
+        tr.innerHTML = `
+          <td class="py-2.5 px-2 text-white font-medium">${row.team}</td>
+          <td class="py-2.5 px-2 text-right ${pctColor(row.group_pct)}">${row.group_pct}</td>
+          <td class="py-2.5 px-2 text-right ${pctColor(row.r32_pct)}">${row.r32_pct}</td>
+          <td class="py-2.5 px-2 text-right ${pctColor(row.r16_pct)}">${row.r16_pct}</td>
+          <td class="py-2.5 px-2 text-right ${pctColor(row.qf_pct)}">${row.qf_pct}</td>
+          <td class="py-2.5 px-2 text-right ${pctColor(row.sf_pct)}">${row.sf_pct}</td>
+          <td class="py-2.5 px-2 text-right ${pctColor(row.final_pct)}">${row.final_pct}</td>
+          <td class="py-2.5 px-2 text-right font-bold ${champColor(row.champion_pct, maxChamp)}">${row.champion_pct}</td>
+        `;
+        tbody.appendChild(tr);
       });
 
-      // Final in the center
-      const finalCol = document.createElement('div');
-      finalCol.className = 'bracket-round';
-      finalCol.innerHTML = `<div class="round-label">Final</div>`;
-      finalCol.appendChild(createMatchCard(knockout.final));
-      wrapper.appendChild(finalCol);
+      // Update sort arrows
+      document.querySelectorAll('#mc-table th.sortable').forEach(th => {
+        const arrow = th.querySelector('.sort-arrow');
+        const col = th.getAttribute('onclick').match(/'(.+)'/)[1];
+        if (col === mcSortCol) {
+          arrow.textContent = mcSortAsc ? ' \u25B2' : ' \u25BC';
+        } else {
+          arrow.textContent = '';
+        }
+      });
 
-      // Right bracket (flows right to left, reverse round order)
-      for (let ri = rounds.length - 1; ri >= 0; ri--) {
-        const round = rounds[ri];
-        const col = createRoundColumn(round.label, round.right, ri);
-        wrapper.appendChild(col);
+      document.getElementById('mc-results').classList.remove('hidden');
+    }
+
+    function pctColor(val) {
+      if (val >= 80) return 'text-emerald-400';
+      if (val >= 50) return 'text-emerald-400/80';
+      if (val >= 20) return 'text-slate-300';
+      if (val > 0) return 'text-slate-400';
+      return 'text-slate-600';
+    }
+
+    function champColor(val, max) {
+      if (val === 0) return 'text-slate-600';
+      const ratio = val / max;
+      if (ratio >= 0.7) return 'text-amber-300';
+      if (ratio >= 0.4) return 'text-amber-400';
+      if (ratio >= 0.15) return 'text-amber-500/80';
+      return 'text-slate-400';
+    }
+
+    function sortMCTable(col) {
+      if (mcSortCol === col) {
+        mcSortAsc = !mcSortAsc;
+      } else {
+        mcSortCol = col;
+        mcSortAsc = col === 'team'; // default: A-Z for team, desc for numbers
       }
-
-      container.appendChild(wrapper);
-      document.getElementById('bracket-section').classList.remove('hidden');
-    }
-
-    function createRoundColumn(label, matches, roundIndex) {
-      const col = document.createElement('div');
-      col.className = 'bracket-round';
-      col.style.gap = (8 * Math.pow(2, roundIndex)) + 'px';
-      col.innerHTML = `<div class="round-label">${label}</div>`;
-      matches.forEach(m => col.appendChild(createMatchCard(m)));
-      return col;
-    }
-
-    function createMatchCard(match) {
-      const card = document.createElement('div');
-      card.className = 'bracket-match';
-      const isHomeWinner = match.winner === match.home;
-      const homeClass = isHomeWinner ? 'winner' : 'loser';
-      const awayClass = isHomeWinner ? 'loser' : 'winner';
-      const homeProb = Math.round(match.home_win * 100);
-      const awayProb = Math.round(match.away_win * 100);
-      card.innerHTML = `
-        <div class="flex justify-between items-center mb-1">
-          <span class="${homeClass}">${match.home}</span>
-          <span class="prob">${homeProb}%</span>
-        </div>
-        <div class="flex justify-between items-center">
-          <span class="${awayClass}">${match.away}</span>
-          <span class="prob">${awayProb}%</span>
-        </div>
-      `;
-      return card;
+      renderMCTable();
     }
 
     const FIXTURES = [

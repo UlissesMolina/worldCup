@@ -1,9 +1,31 @@
 """Tournament simulation: group stage, standings, seeding, knockout."""
 
+import random
+
 import pandas as pd
 
 from src.features.engineering import build_features
 from src.data.groups import FIXED_R32, WINNER_VS_THIRD_POOLS
+
+
+def sample_match_outcome(
+    probs: dict[str, float], allow_draw: bool = True
+) -> str:
+    """Sample a match outcome from predicted probabilities.
+
+    For knockout matches (allow_draw=False), draw probability is redistributed
+    proportionally between home_win and away_win.
+    """
+    if allow_draw:
+        outcomes = ["home_win", "draw", "away_win"]
+        weights = [probs["home_win"], probs["draw"], probs["away_win"]]
+    else:
+        hw = probs["home_win"]
+        aw = probs["away_win"]
+        total = hw + aw
+        outcomes = ["home_win", "away_win"]
+        weights = [hw / total, aw / total]
+    return random.choices(outcomes, weights=weights, k=1)[0]
 
 
 def estimate_scoreline(
@@ -57,6 +79,50 @@ def predict_match(
     # Determine result: highest probability wins
     prob_map = {"home_win": home_win_prob, "draw": draw_prob, "away_win": away_win_prob}
     result = max(prob_map, key=prob_map.get)
+
+    home_goals, away_goals = estimate_scoreline(result, home_win_prob, draw_prob, away_win_prob)
+
+    return {
+        "home": home_team,
+        "away": away_team,
+        "home_win": round(home_win_prob, 4),
+        "draw": round(draw_prob, 4),
+        "away_win": round(away_win_prob, 4),
+        "result": result,
+        "home_goals": home_goals,
+        "away_goals": away_goals,
+    }
+
+
+def predict_match_stochastic(
+    home_team: str,
+    away_team: str,
+    df: pd.DataFrame,
+    elo_ratings: dict,
+    predict_fn,
+    match_date: pd.Timestamp,
+    neutral: bool = True,
+    tournament: str = "FIFA World Cup",
+    allow_draw: bool = True,
+) -> dict:
+    """Predict a match with stochastic outcome sampling."""
+    features = build_features(
+        df=df,
+        home_team=home_team,
+        away_team=away_team,
+        match_date=match_date,
+        neutral=neutral,
+        tournament=tournament,
+        elo_ratings=elo_ratings,
+    )
+    X = pd.DataFrame([features])
+    probs = predict_fn(X)
+    home_win_prob = float(probs["home_win"].iloc[0])
+    draw_prob = float(probs["draw"].iloc[0])
+    away_win_prob = float(probs["away_win"].iloc[0])
+
+    prob_map = {"home_win": home_win_prob, "draw": draw_prob, "away_win": away_win_prob}
+    result = sample_match_outcome(prob_map, allow_draw=allow_draw)
 
     home_goals, away_goals = estimate_scoreline(result, home_win_prob, draw_prob, away_win_prob)
 
@@ -272,6 +338,223 @@ def simulate_knockout_round(
                 match["winner"] = match["away"]
         results.append(match)
     return results
+
+
+def simulate_group_stage_stochastic(
+    groups: dict[str, list[str]],
+    df: pd.DataFrame,
+    elo_ratings: dict,
+    predict_fn,
+    match_date: pd.Timestamp,
+) -> dict:
+    """Simulate all group stage matches with stochastic outcomes."""
+    from itertools import combinations
+
+    result = {}
+    for group_letter, teams in groups.items():
+        matches = []
+        for home, away in combinations(teams, 2):
+            match = predict_match_stochastic(
+                home_team=home,
+                away_team=away,
+                df=df,
+                elo_ratings=elo_ratings,
+                predict_fn=predict_fn,
+                match_date=match_date,
+                neutral=True,
+                tournament="FIFA World Cup",
+                allow_draw=True,
+            )
+            matches.append(match)
+
+        standings = compute_group_standings(teams, matches)
+        for row in standings:
+            row["advanced"] = row["pos"] <= 2
+
+        result[group_letter] = {
+            "standings": standings,
+            "matches": matches,
+        }
+
+    return result
+
+
+def simulate_knockout_round_stochastic(
+    matchups: list[dict],
+    df: pd.DataFrame,
+    elo_ratings: dict,
+    predict_fn,
+    match_date: pd.Timestamp,
+) -> list[dict]:
+    """Simulate a knockout round with stochastic outcomes. No draws."""
+    results = []
+    for matchup in matchups:
+        match = predict_match_stochastic(
+            home_team=matchup["home"],
+            away_team=matchup["away"],
+            df=df,
+            elo_ratings=elo_ratings,
+            predict_fn=predict_fn,
+            match_date=match_date,
+            neutral=True,
+            tournament="FIFA World Cup",
+            allow_draw=False,
+        )
+        match["winner"] = match["home"] if match["result"] == "home_win" else match["away"]
+        results.append(match)
+    return results
+
+
+def simulate_tournament_stochastic(
+    df: pd.DataFrame,
+    elo_ratings: dict,
+    predict_fn,
+    match_date: pd.Timestamp | None = None,
+) -> dict:
+    """Simulate the full 2026 World Cup with stochastic outcomes."""
+    from src.data.groups import GROUPS
+
+    if match_date is None:
+        match_date = pd.Timestamp("2026-06-11")
+
+    group_results = simulate_group_stage_stochastic(
+        GROUPS, df, elo_ratings, predict_fn, match_date
+    )
+
+    third_place = rank_third_place(group_results)
+
+    for entry in third_place:
+        if entry["advanced"]:
+            group = entry["group"]
+            for row in group_results[group]["standings"]:
+                if row["pos"] == 3:
+                    row["advanced"] = True
+
+    r32_matchups = seed_bracket(group_results, third_place)
+
+    r32 = simulate_knockout_round_stochastic(r32_matchups, df, elo_ratings, predict_fn, match_date)
+
+    r16_matchups = [
+        {"home": r32[i]["winner"], "away": r32[i + 1]["winner"]}
+        for i in range(0, 16, 2)
+    ]
+    r16 = simulate_knockout_round_stochastic(r16_matchups, df, elo_ratings, predict_fn, match_date)
+
+    qf_matchups = [
+        {"home": r16[i]["winner"], "away": r16[i + 1]["winner"]}
+        for i in range(0, 8, 2)
+    ]
+    qf = simulate_knockout_round_stochastic(qf_matchups, df, elo_ratings, predict_fn, match_date)
+
+    sf_matchups = [
+        {"home": qf[i]["winner"], "away": qf[i + 1]["winner"]}
+        for i in range(0, 4, 2)
+    ]
+    sf = simulate_knockout_round_stochastic(sf_matchups, df, elo_ratings, predict_fn, match_date)
+
+    final_matchup = [{"home": sf[0]["winner"], "away": sf[1]["winner"]}]
+    final = simulate_knockout_round_stochastic(final_matchup, df, elo_ratings, predict_fn, match_date)
+
+    return {
+        "groups": group_results,
+        "knockout": {
+            "r32": r32,
+            "r16": r16,
+            "qf": qf,
+            "sf": sf,
+            "final": final[0],
+        },
+        "champion": final[0]["winner"],
+    }
+
+
+def _extract_teams_at_stage(knockout_round: list[dict]) -> set[str]:
+    """Extract all team names that participated in a knockout round."""
+    teams = set()
+    for match in knockout_round:
+        teams.add(match["home"])
+        teams.add(match["away"])
+    return teams
+
+
+def simulate_tournament_monte_carlo(
+    df: pd.DataFrame,
+    elo_ratings: dict,
+    predict_fn,
+    n_simulations: int = 10000,
+    match_date: pd.Timestamp | None = None,
+) -> dict:
+    """Run Monte Carlo tournament simulations and aggregate advancement probabilities."""
+    from src.data.groups import GROUPS
+
+    # Collect all team names
+    all_teams = set()
+    for teams in GROUPS.values():
+        all_teams.update(teams)
+
+    # Initialize counters
+    counters = {
+        team: {
+            "group": 0, "r32": 0, "r16": 0,
+            "qf": 0, "sf": 0, "final": 0, "champion": 0,
+        }
+        for team in all_teams
+    }
+
+    for _ in range(n_simulations):
+        result = simulate_tournament_stochastic(df, elo_ratings, predict_fn, match_date)
+
+        # Group stage: teams that advanced (pos 1, 2, or advancing 3rd)
+        for group_data in result["groups"].values():
+            for row in group_data["standings"]:
+                if row.get("advanced"):
+                    counters[row["team"]]["group"] += 1
+
+        # R32 participants = all teams in the R32 matches
+        r32_teams = _extract_teams_at_stage(result["knockout"]["r32"])
+        for team in r32_teams:
+            counters[team]["r32"] += 1
+
+        # R16 participants
+        r16_teams = _extract_teams_at_stage(result["knockout"]["r16"])
+        for team in r16_teams:
+            counters[team]["r16"] += 1
+
+        # QF participants
+        qf_teams = _extract_teams_at_stage(result["knockout"]["qf"])
+        for team in qf_teams:
+            counters[team]["qf"] += 1
+
+        # SF participants
+        sf_teams = _extract_teams_at_stage(result["knockout"]["sf"])
+        for team in sf_teams:
+            counters[team]["sf"] += 1
+
+        # Final participants
+        final_match = result["knockout"]["final"]
+        counters[final_match["home"]]["final"] += 1
+        counters[final_match["away"]]["final"] += 1
+
+        # Champion
+        counters[result["champion"]]["champion"] += 1
+
+    # Convert counts to percentages
+    teams_result = {}
+    for team, counts in counters.items():
+        teams_result[team] = {
+            "group_pct": round(counts["group"] / n_simulations * 100, 1),
+            "r32_pct": round(counts["r32"] / n_simulations * 100, 1),
+            "r16_pct": round(counts["r16"] / n_simulations * 100, 1),
+            "qf_pct": round(counts["qf"] / n_simulations * 100, 1),
+            "sf_pct": round(counts["sf"] / n_simulations * 100, 1),
+            "final_pct": round(counts["final"] / n_simulations * 100, 1),
+            "champion_pct": round(counts["champion"] / n_simulations * 100, 1),
+        }
+
+    return {
+        "teams": teams_result,
+        "simulations": n_simulations,
+    }
 
 
 def simulate_tournament(

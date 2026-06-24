@@ -10,7 +10,7 @@ from src.api.schemas import PredictionRequest, PredictionResponse
 from src.features.engineering import build_features, compute_elo_ratings
 from src.models.xgboost_model import load_xgboost, predict_xgboost
 from src.models.pytorch_model import load_pytorch, predict_pytorch
-from src.simulation.bracket import simulate_tournament
+from src.simulation.bracket import simulate_tournament, simulate_tournament_monte_carlo
 
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -99,9 +99,10 @@ def predict(req: PredictionRequest):
 
 
 @app.post("/simulate-bracket")
-def simulate_bracket():
-    return simulate_tournament(
+def simulate_bracket(n_simulations: int = 10000):
+    return simulate_tournament_monte_carlo(
         df=_state["df"],
         elo_ratings=_state["elo_ratings"],
         predict_fn=_state["predict_fn"],
+        n_simulations=n_simulations,
     )

@@ -1,3 +1,5 @@
+import random
+
 import pandas as pd
 import pytest
 
@@ -9,6 +11,8 @@ from src.simulation.bracket import (
     seed_bracket,
     simulate_knockout_round,
     simulate_tournament,
+    sample_match_outcome,
+    simulate_tournament_monte_carlo,
 )
 
 
@@ -131,6 +135,28 @@ def test_seed_bracket():
             assert home_group != away_group, f"{match['home']} vs {match['away']} are from same group {home_group}"
 
 
+def test_sample_match_outcome_respects_distribution():
+    random.seed(42)
+    probs = {"home_win": 0.6, "draw": 0.2, "away_win": 0.2}
+    counts = {"home_win": 0, "draw": 0, "away_win": 0}
+    n = 10000
+    for _ in range(n):
+        outcome = sample_match_outcome(probs)
+        counts[outcome] += 1
+
+    assert abs(counts["home_win"] / n - 0.6) < 0.05
+    assert abs(counts["draw"] / n - 0.2) < 0.05
+    assert abs(counts["away_win"] / n - 0.2) < 0.05
+
+
+def test_sample_match_outcome_knockout_no_draw():
+    random.seed(42)
+    probs = {"home_win": 0.4, "draw": 0.3, "away_win": 0.3}
+    for _ in range(1000):
+        outcome = sample_match_outcome(probs, allow_draw=False)
+        assert outcome in ("home_win", "away_win")
+
+
 def _make_mock_predict_fn():
     """Return a predict_fn that always gives home team 60% win."""
     def predict_fn(X):
@@ -195,3 +221,44 @@ def test_simulate_tournament_returns_full_structure():
     assert len(result["knockout"]["sf"]) == 2
     assert "final" in result["knockout"]
     assert "champion" in result
+
+
+def test_simulate_tournament_monte_carlo_shape():
+    fake_df = pd.DataFrame({
+        "date": pd.to_datetime(["2020-01-01", "2021-01-01", "2022-01-01"]),
+        "home_team": ["Brazil", "Germany", "France"],
+        "away_team": ["Germany", "France", "Brazil"],
+        "home_score": [2, 1, 0],
+        "away_score": [1, 0, 0],
+        "tournament": ["Friendly", "Friendly", "Friendly"],
+        "neutral": [False, False, False],
+    })
+    from src.features.engineering import compute_elo_ratings
+    elo = compute_elo_ratings(fake_df)
+
+    def predict_fn(X):
+        return pd.DataFrame(
+            [{"away_win": 0.15, "draw": 0.25, "home_win": 0.60}]
+        )
+
+    result = simulate_tournament_monte_carlo(
+        fake_df, elo, predict_fn, n_simulations=50
+    )
+
+    assert "teams" in result
+    assert "simulations" in result
+    assert result["simulations"] == 50
+
+    # Check that all 48 World Cup teams have entries
+    assert len(result["teams"]) == 48
+
+    # Check shape of each team's data
+    stages = ["group_pct", "r32_pct", "r16_pct", "qf_pct", "sf_pct", "final_pct", "champion_pct"]
+    for team, data in result["teams"].items():
+        for stage in stages:
+            assert stage in data, f"Missing {stage} for {team}"
+            assert 0 <= data[stage] <= 100, f"{stage} for {team} is {data[stage]}"
+
+    # At least one team should have champion_pct > 0
+    champion_total = sum(t["champion_pct"] for t in result["teams"].values())
+    assert abs(champion_total - 100.0) < 1.0  # should sum to ~100%
