@@ -49,6 +49,7 @@
     <div class="flex gap-1 bg-white/5 rounded-xl p-1 border border-white/10">
       <button id="tab-predictor" onclick="switchTab('predictor')" class="tab-btn flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all text-white bg-white/10">Match Predictor</button>
       <button id="tab-bracket" onclick="switchTab('bracket')" class="tab-btn flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all text-slate-400 hover:text-slate-300">Tournament Simulation</button>
+      <button id="tab-results" onclick="switchTab('results')" class="tab-btn flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all text-slate-400 hover:text-slate-300">Results vs Predictions</button>
     </div>
   </div>
 
@@ -157,6 +158,33 @@
     </div>
   </main>
 
+  <!-- Results Comparison Tab (hidden by default) -->
+  <main id="tab-content-results" class="hidden mx-auto px-6 py-8" style="max-width: 1100px;">
+    <!-- Summary Bar -->
+    <div id="results-summary" class="hidden bg-surface border border-border rounded-2xl p-7 mb-7 fade-in">
+      <div class="flex items-center justify-between">
+        <div>
+          <h2 class="text-white font-semibold text-lg">Model Accuracy</h2>
+          <p id="results-summary-text" class="text-sm text-slate-400 mt-1"></p>
+        </div>
+        <div id="results-accuracy-badge" class="text-3xl font-bold"></div>
+      </div>
+    </div>
+
+    <!-- Load Button -->
+    <div id="results-load" class="bg-surface border border-border rounded-2xl p-7 text-center">
+      <h2 class="text-white font-semibold text-lg mb-3">2026 World Cup — Results vs Predictions</h2>
+      <p class="text-sm text-slate-500 mb-6">Compare model predictions against actual match results</p>
+      <button id="results-btn" onclick="loadResultsComparison()" class="bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 text-white px-8 py-3 rounded-xl font-semibold text-sm transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+        Load Comparison
+      </button>
+      <div id="results-error" class="hidden text-red-400 text-sm mt-4"></div>
+    </div>
+
+    <!-- Group Tables -->
+    <div id="results-groups" class="hidden space-y-6 mt-7 fade-in"></div>
+  </main>
+
   <script>
     // Tab switching
     function switchTab(tab) {
@@ -169,6 +197,7 @@
 
       document.getElementById('tab-content-predictor').classList.toggle('hidden', tab !== 'predictor');
       document.getElementById('tab-content-bracket').classList.toggle('hidden', tab !== 'bracket');
+      document.getElementById('tab-content-results').classList.toggle('hidden', tab !== 'results');
     }
 
     // Monte Carlo state
@@ -412,6 +441,103 @@
 
     loadTeams();
     renderFixtures();
+
+    async function loadResultsComparison() {
+      const btn = document.getElementById('results-btn');
+      const errorEl = document.getElementById('results-error');
+      errorEl.classList.add('hidden');
+      btn.disabled = true;
+      btn.textContent = 'Loading predictions...';
+
+      try {
+        const res = await fetch('/results-comparison');
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.detail || 'Failed to load results');
+        }
+        const data = await res.json();
+        renderResultsComparison(data);
+      } catch (e) {
+        errorEl.textContent = e.message;
+        errorEl.classList.remove('hidden');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Load Comparison';
+      }
+    }
+
+    function renderResultsComparison(data) {
+      // Summary
+      const summaryEl = document.getElementById('results-summary');
+      const summaryText = document.getElementById('results-summary-text');
+      const badge = document.getElementById('results-accuracy-badge');
+
+      summaryText.textContent = `Predicted ${data.summary.correct} of ${data.summary.total_matches} matches correctly`;
+      const acc = data.summary.accuracy;
+      badge.textContent = acc + '%';
+      badge.className = 'text-3xl font-bold ' + (acc >= 50 ? 'text-emerald-400' : acc >= 35 ? 'text-yellow-400' : 'text-red-400');
+      summaryEl.classList.remove('hidden');
+
+      // Hide load button
+      document.getElementById('results-load').classList.add('hidden');
+
+      // Groups
+      const container = document.getElementById('results-groups');
+      container.innerHTML = '';
+
+      const groupKeys = Object.keys(data.groups).sort();
+      groupKeys.forEach(group => {
+        const groupData = data.groups[group];
+        const div = document.createElement('div');
+        div.className = 'bg-surface border border-border rounded-2xl p-7';
+
+        let html = `
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-white font-semibold">Group ${group}</h3>
+            <span class="text-sm ${groupData.accuracy >= 50 ? 'text-emerald-400' : 'text-yellow-400'}">${groupData.accuracy}% accurate</span>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-slate-400 border-b border-white/10">
+                  <th class="text-left py-2 px-2">Match</th>
+                  <th class="text-right py-2 px-2">Home %</th>
+                  <th class="text-right py-2 px-2">Draw %</th>
+                  <th class="text-right py-2 px-2">Away %</th>
+                  <th class="text-center py-2 px-2">Predicted</th>
+                  <th class="text-center py-2 px-2">Score</th>
+                  <th class="text-center py-2 px-2">Actual</th>
+                  <th class="text-center py-2 px-2"></th>
+                </tr>
+              </thead>
+              <tbody>`;
+
+        groupData.matches.forEach(m => {
+          const resultLabel = r => r === 'home_win' ? 'Home' : r === 'away_win' ? 'Away' : 'Draw';
+          const correctClass = m.correct ? 'bg-emerald-500/10' : 'bg-red-500/10';
+          const icon = m.correct ? '&#10003;' : '&#10007;';
+          const iconColor = m.correct ? 'text-emerald-400' : 'text-red-400';
+
+          html += `
+                <tr class="${correctClass} border-b border-white/5">
+                  <td class="py-2.5 px-2 text-white">${m.home} vs ${m.away}</td>
+                  <td class="py-2.5 px-2 text-right text-slate-300">${Math.round(m.predicted.home_win * 100)}%</td>
+                  <td class="py-2.5 px-2 text-right text-slate-300">${Math.round(m.predicted.draw * 100)}%</td>
+                  <td class="py-2.5 px-2 text-right text-slate-300">${Math.round(m.predicted.away_win * 100)}%</td>
+                  <td class="py-2.5 px-2 text-center font-medium text-slate-200">${resultLabel(m.predicted.result)}</td>
+                  <td class="py-2.5 px-2 text-center font-bold text-white">${m.actual.home_goals}-${m.actual.away_goals}</td>
+                  <td class="py-2.5 px-2 text-center font-medium text-slate-200">${resultLabel(m.actual.result)}</td>
+                  <td class="py-2.5 px-2 text-center text-lg ${iconColor}">${icon}</td>
+                </tr>`;
+        });
+
+        html += `</tbody></table></div>`;
+        div.innerHTML = html;
+        container.appendChild(div);
+      });
+
+      container.classList.remove('hidden');
+    }
   </script>
 </body>
 </html>
