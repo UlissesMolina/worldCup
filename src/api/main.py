@@ -11,6 +11,8 @@ from src.features.engineering import build_features, compute_elo_ratings
 from src.models.xgboost_model import load_xgboost, predict_xgboost
 from src.models.pytorch_model import load_pytorch, predict_pytorch
 from src.simulation.bracket import simulate_tournament, simulate_tournament_monte_carlo
+from src.simulation.results_comparison import compare_results
+from src.data.actual_results import ACTUAL_RESULTS
 
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -105,4 +107,14 @@ def simulate_bracket(n_simulations: int = 10000):
         elo_ratings=_state["elo_ratings"],
         predict_fn=_state["predict_fn"],
         n_simulations=n_simulations,
+    )
+
+
+@app.get("/results-comparison")
+def results_comparison():
+    return compare_results(
+        actual_results=ACTUAL_RESULTS,
+        df=_state["df"],
+        elo_ratings=_state["elo_ratings"],
+        predict_fn=_state["predict_fn"],
     )

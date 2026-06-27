@@ -135,3 +135,29 @@ def test_simulate_bracket_returns_monte_carlo(mock_bracket_client):
         for stage in stages:
             assert stage in team_data
             assert 0 <= team_data[stage] <= 100
+
+
+def test_results_comparison_returns_structure(mock_bracket_client):
+    client = mock_bracket_client
+    resp = client.get("/results-comparison")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert "groups" in data
+    assert "summary" in data
+    assert "total_matches" in data["summary"]
+    assert "correct" in data["summary"]
+    assert "accuracy" in data["summary"]
+
+    # Should have at least the completed groups
+    assert len(data["groups"]) > 0
+
+    # Check match structure
+    first_group = next(iter(data["groups"].values()))
+    assert "matches" in first_group
+    assert "accuracy" in first_group
+    if first_group["matches"]:
+        match = first_group["matches"][0]
+        assert "predicted" in match
+        assert "actual" in match
+        assert "correct" in match
